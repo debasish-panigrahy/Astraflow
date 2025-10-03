@@ -6,10 +6,14 @@ import { LiveProvider, LiveEditor, LivePreview, LiveError } from "react-live";
 // Component to show actual live preview of the generated business application
 function AppLivePreview({ response, workflow, onClose }) {
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('preview'); // 'preview' or 'code'
+  const [activeTab, setActiveTab] = useState('preview'); // 'preview', 'code', or 'chat'
   const [selectedFile, setSelectedFile] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState(null);
+  const [chatInput, setChatInput] = useState('');
+  const [isModifying, setIsModifying] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [currentCode, setCurrentCode] = useState(response?.code || response);
 
   // Simple VS Code-like syntax highlighting
   const highlightCode = (code) => {
@@ -54,9 +58,72 @@ function AppLivePreview({ response, workflow, onClose }) {
 
   // Handle both structured and single component responses
   const isStructured = response?.type === 'structured' && response?.structure;
-  const code = response?.code || response;
+  const code = currentCode || response?.code || response;
   const structure = response?.structure;
   const project = response?.project; // Complete project structure
+
+  // Function to modify application based on user chat
+  const modifyApplication = async () => {
+    if (!chatInput.trim()) return;
+
+    setIsModifying(true);
+    
+    // Add user message to chat history
+    const userMessage = { type: 'user', content: chatInput, timestamp: new Date() };
+    setChatHistory(prev => [...prev, userMessage]);
+    
+    try {
+      const response = await fetch('http://localhost:5000/modify-app', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          currentCode: code,
+          modification: chatInput,
+          workflow: workflow
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        
+        // Add AI response to chat history
+        const aiMessage = { 
+          type: 'ai', 
+          content: `✅ I've modified your application: ${result.summary}`, 
+          timestamp: new Date() 
+        };
+        setChatHistory(prev => [...prev, aiMessage]);
+        
+        // Update the current code
+        setCurrentCode(result.modifiedCode);
+        
+        setChatInput('');
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Modification failed');
+      }
+    } catch (error) {
+      console.error('Error modifying app:', error);
+      const errorMessage = { 
+        type: 'ai', 
+        content: `❌ Error: ${error.message}`, 
+        timestamp: new Date() 
+      };
+      setChatHistory(prev => [...prev, errorMessage]);
+    } finally {
+      setIsModifying(false);
+    }
+  };
+
+  // Handle Enter key press in chat input
+  const handleChatKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      modifyApplication();
+    }
+  };
 
   // Download project as ZIP
   const downloadProject = async () => {
@@ -310,6 +377,12 @@ yarn-error.log*`
   const previewCode = prepareCodeForPreview(code);
   const displayCode = getDisplayCode(code); // Complete component code for display
 
+  // Update preview code when currentCode changes
+  React.useEffect(() => {
+    // Force re-render of live preview when code changes
+    setError(null);
+  }, [currentCode]);
+
   if (!code) {
     return (
       <div className="border border-gray-300 bg-gray-50 p-8 rounded text-center">
@@ -382,6 +455,16 @@ yarn-error.log*`
               >
                 &lt;&gt; Code
               </button>
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                  activeTab === 'chat' 
+                    ? 'bg-white text-gray-800 shadow-sm' 
+                    : 'text-white/80 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                💬 Modify
+              </button>
             </div>
             
             {/* Download Project Button */}
@@ -443,7 +526,7 @@ yarn-error.log*`
             <div className="bg-white h-full overflow-auto">
               <LivePreview />
             </div>
-          ) : (
+          ) : activeTab === 'code' ? (
             <div className="bg-gray-900 text-white h-full overflow-auto flex">
               {isStructured ? (
                 <>
@@ -534,6 +617,93 @@ yarn-error.log*`
                   )}
                 </div>
               )}
+            </div>
+          ) : (
+            /* Chat Tab */
+            <div className="bg-gray-50 h-full flex flex-col">
+              {/* Chat Header */}
+              <div className="bg-white border-b border-gray-200 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+                    <span className="text-white font-bold text-lg">AI</span>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-800">Application Assistant</h3>
+                    <p className="text-sm text-gray-500">Tell me how to modify your application</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chat History */}
+              <div className="flex-1 overflow-auto p-4 space-y-4">
+                {chatHistory.length === 0 ? (
+                  <div className="text-center text-gray-500 mt-8">
+                    <div className="text-4xl mb-4">💬</div>
+                    <div className="text-lg font-medium mb-2">Ready to help!</div>
+                    <div className="text-sm">
+                      Ask me to modify your application. For example:
+                      <div className="mt-2 space-y-1 text-left bg-white p-3 rounded-lg border max-w-md mx-auto">
+                        <div>• "Add a dark mode toggle"</div>
+                        <div>• "Change the color scheme to green"</div>
+                        <div>• "Add a search functionality"</div>
+                        <div>• "Make it responsive for mobile"</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  chatHistory.map((message, index) => (
+                    <div key={index} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-3xl p-3 rounded-lg ${
+                        message.type === 'user' 
+                          ? 'bg-blue-500 text-white' 
+                          : 'bg-white border border-gray-200 text-gray-800'
+                      }`}>
+                        <div className="text-sm font-medium mb-1">
+                          {message.type === 'user' ? 'You' : 'AI Assistant'}
+                        </div>
+                        <div className="whitespace-pre-wrap">{message.content}</div>
+                        <div className={`text-xs mt-2 opacity-70`}>
+                          {message.timestamp.toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Chat Input */}
+              <div className="bg-white border-t border-gray-200 p-4">
+                <div className="flex gap-3">
+                  <textarea
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={handleChatKeyPress}
+                    placeholder="Describe how you want to modify your application..."
+                    className="flex-1 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    rows="2"
+                    disabled={isModifying}
+                  />
+                  <button
+                    onClick={modifyApplication}
+                    disabled={isModifying || !chatInput.trim()}
+                    className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-all flex items-center gap-2"
+                  >
+                    {isModifying ? (
+                      <>
+                        <span className="animate-spin">⏳</span>
+                        Modifying...
+                      </>
+                    ) : (
+                      <>
+                        🚀 Send
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500 mt-2">
+                  Press Enter to send • Shift+Enter for new line
+                </div>
+              </div>
             </div>
           )}
         </div>
