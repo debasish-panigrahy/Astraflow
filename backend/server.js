@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import { deployToVercel } from './deploy.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -494,5 +495,45 @@ function nodeTypeToComponentName(nodeType) {
   const name = nodeType.split('.').pop() || nodeType;
   return name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, '$1') + 'Component';
 }
+
+// Deployment endpoint
+app.post('/deploy-app', async (req, res) => {
+  try {
+    const { name, workflow, files, platform } = req.body;
+
+    console.log(`🚀 Starting deployment for: ${name}`);
+    
+    // Deploy to Vercel (default platform)
+    const deploymentResult = await deployToVercel({
+      name,
+      workflow,
+      files,
+      platform: platform || 'vercel'
+    });
+
+    if (deploymentResult.success) {
+      console.log(`✅ Deployment successful: ${deploymentResult.url}`);
+      res.json({
+        success: true,
+        url: deploymentResult.url,
+        deploymentId: deploymentResult.deploymentId,
+        status: deploymentResult.status
+      });
+    } else {
+      console.error(`❌ Deployment failed: ${deploymentResult.error}`);
+      res.status(500).json({
+        success: false,
+        message: deploymentResult.error
+      });
+    }
+
+  } catch (error) {
+    console.error('Deployment endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during deployment'
+    });
+  }
+});
 
 app.listen(5000, () => console.log("Server running on port 5000"));
