@@ -9,6 +9,47 @@ function AppLivePreview({ response, workflow, onClose }) {
   const [activeTab, setActiveTab] = useState('preview'); // 'preview' or 'code'
   const [selectedFile, setSelectedFile] = useState(null);
 
+  // Simple VS Code-like syntax highlighting
+  const highlightCode = (code) => {
+    if (!code) return '';
+    
+    return code
+      // Protect HTML entities first
+      .replace(/&lt;/g, '___LT___')
+      .replace(/&gt;/g, '___GT___')
+      .replace(/&amp;/g, '___AMP___')
+      
+      // JSX/HTML tags (more careful pattern)
+      .replace(/<(\/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?)\s*>/g, '<span style="color: #569CD6;">&lt;$1&gt;</span>')
+      
+      // JavaScript keywords
+      .replace(/\b(import|export|from|const|let|var|function|return|if|else|class|extends|async|await|try|catch|for|while|do|switch|case|break|continue|typeof|instanceof)\b/g, '<span style="color: #C586C0;">$1</span>')
+      
+      // React/JSX specific
+      .replace(/\b(React|useState|useEffect|useMemo|useCallback|Component|props|state)\b/g, '<span style="color: #4EC9B0;">$1</span>')
+      
+      // String literals (be more careful with quotes)
+      .replace(/(['"`])([^'"`\n\r]*?)\1/g, '<span style="color: #CE9178;">$1$2$1</span>')
+      
+      // Comments
+      .replace(/(\/\/.*?$)/gm, '<span style="color: #6A9955; font-style: italic;">$1</span>')
+      .replace(/(\/\*[\s\S]*?\*\/)/g, '<span style="color: #6A9955; font-style: italic;">$1</span>')
+      
+      // Numbers
+      .replace(/\b(\d+\.?\d*)\b/g, '<span style="color: #B5CEA8;">$1</span>')
+      
+      // Booleans and special values
+      .replace(/\b(true|false|null|undefined|NaN|Infinity)\b/g, '<span style="color: #569CD6;">$1</span>')
+      
+      // Class names and properties
+      .replace(/\b(className|style|onClick|onChange|onSubmit|value|type|name|id)\s*=/g, '<span style="color: #9CDCFE;">$1</span>=')
+      
+      // Restore HTML entities
+      .replace(/___LT___/g, '&lt;')
+      .replace(/___GT___/g, '&gt;')
+      .replace(/___AMP___/g, '&amp;');
+  };
+
   // Handle both structured and single component responses
   const isStructured = response?.type === 'structured' && response?.structure;
   const code = response?.code || response;
@@ -40,7 +81,7 @@ function AppLivePreview({ response, workflow, onClose }) {
     }
   };
 
-  // Clean and prepare code for live preview
+  // Clean and prepare code for live preview (keep original for Code tab)
   const prepareCodeForPreview = (rawCode) => {
     if (!rawCode) return '';
     
@@ -56,6 +97,7 @@ function AppLivePreview({ response, workflow, onClose }) {
       cleanCode = lines.join('\n');
     }
     
+    // Only modify for LIVE PREVIEW, not for code display
     // Remove import statements (react-live provides React automatically)
     cleanCode = cleanCode.replace(/import.*from.*['""][;\n\r]*/g, '');
     
@@ -79,7 +121,54 @@ function AppLivePreview({ response, workflow, onClose }) {
     return cleanCode;
   };
 
+  // Get clean code for display (preserve original structure)
+  const getDisplayCode = (rawCode) => {
+    if (!rawCode) return '';
+    
+    let cleanCode = rawCode;
+    
+    // Remove code block markers only
+    if (cleanCode.startsWith('```')) {
+      const lines = cleanCode.split('\n');
+      lines.shift(); // Remove first ```
+      if (lines[lines.length - 1].trim() === '```') {
+        lines.pop(); // Remove last ```
+      }
+      cleanCode = lines.join('\n');
+    }
+    
+    // Check if it already has imports - if not, add them
+    const hasImports = cleanCode.includes('import') && cleanCode.includes('from');
+    const hasExports = cleanCode.includes('export default');
+    
+    if (!hasImports || !hasExports) {
+      // Extract component name from function
+      const functionMatch = cleanCode.match(/function\s+(\w+)\s*\(/);
+      const componentName = functionMatch ? functionMatch[1] : 'WorkflowApp';
+      
+      let completeCode = '';
+      
+      // Add imports if missing
+      if (!hasImports) {
+        completeCode += `import React, { useState, useEffect } from 'react';\n\n`;
+      }
+      
+      // Add the component code
+      completeCode += cleanCode;
+      
+      // Add export if missing
+      if (!hasExports) {
+        completeCode += `\n\nexport default ${componentName};`;
+      }
+      
+      return completeCode;
+    }
+    
+    return cleanCode; // Return as-is if already complete
+  };
+
   const previewCode = prepareCodeForPreview(code);
+  const displayCode = getDisplayCode(code); // Complete component code for display
 
   if (!code) {
     return (
@@ -263,11 +352,16 @@ function AppLivePreview({ response, workflow, onClose }) {
                   </div>
                 </>
               ) : (
-                <div className="flex-1 p-4">
-                  <h4 className="text-lg font-semibold mb-3">📄 Generated Code</h4>
-                  <pre className="bg-gray-800 p-4 rounded-lg overflow-auto text-sm font-mono max-h-96 border">
-                    <code className="text-green-400">{code || '// No code available'}</code>
-                  </pre>
+                <div className="flex-1 h-full">
+                  {displayCode && (
+                    <div className="h-full bg-slate-900 text-gray-100 font-mono text-sm overflow-auto">
+                      <div className="p-6">
+                        <pre className="whitespace-pre-wrap leading-relaxed">
+                          {displayCode}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
