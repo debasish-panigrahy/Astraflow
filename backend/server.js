@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import { deployToVercel } from './deploy.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -494,5 +495,133 @@ function nodeTypeToComponentName(nodeType) {
   const name = nodeType.split('.').pop() || nodeType;
   return name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, '$1') + 'Component';
 }
+
+// Deployment endpoint
+app.post('/deploy-app', async (req, res) => {
+  try {
+    const { name, workflow, files, platform } = req.body;
+
+    console.log(`🚀 Starting deployment for: ${name}`);
+    
+    // Deploy to Vercel (default platform)
+    const deploymentResult = await deployToVercel({
+      name,
+      workflow,
+      files,
+      platform: platform || 'vercel'
+    });
+
+    if (deploymentResult.success) {
+      console.log(`✅ Deployment successful: ${deploymentResult.url}`);
+      res.json({
+        success: true,
+        url: deploymentResult.url,
+        deploymentId: deploymentResult.deploymentId,
+        status: deploymentResult.status
+      });
+    } else {
+      console.error(`❌ Deployment failed: ${deploymentResult.error}`);
+      res.status(500).json({
+        success: false,
+        message: deploymentResult.error
+      });
+    }
+
+  } catch (error) {
+    console.error('Deployment endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during deployment'
+    });
+  }
+});
+
+// Modify application endpoint
+app.post('/modify-app', async (req, res) => {
+  try {
+    const { currentCode, modification, workflow } = req.body;
+    
+    if (!currentCode || !modification) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current code and modification request are required'
+      });
+    }
+
+    console.log(`🔄 Modifying application based on: ${modification}`);
+
+    // Create a prompt for modifying the existing code
+    const modificationPrompt = `
+You are an expert React developer tasked with modifying an existing React application based on user requirements.
+
+CURRENT APPLICATION CODE:
+\`\`\`jsx
+${currentCode}
+\`\`\`
+
+USER MODIFICATION REQUEST:
+"${modification}"
+
+WORKFLOW CONTEXT:
+${workflow ? `Workflow Name: ${workflow.name}\nNodes: ${workflow.nodes?.map(node => node.name || node.type).join(', ')}` : 'No workflow context'}
+
+INSTRUCTIONS:
+1. Analyze the current code and understand its structure
+2. Implement the requested modification while preserving existing functionality
+3. Return ONLY the complete modified React component code
+4. Ensure the code is functional and follows React best practices
+5. Include all necessary imports and exports
+6. Maintain the original styling approach (Tailwind CSS)
+7. Add meaningful comments for new functionality
+
+IMPORTANT:
+- Return ONLY the modified React component code, no explanations
+- Ensure the component remains fully functional
+- Keep the same component name unless specifically requested to change it
+- Maintain code quality and readability
+
+Modified React Component:`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: modificationPrompt }],
+      temperature: 0.3
+    });
+
+    const modifiedCode = response.choices[0].message.content.trim();
+    
+    // Generate a summary of what was changed
+    const summaryPrompt = `
+Based on this modification request: "${modification}"
+
+Provide a brief, user-friendly summary of what was changed in the application. Keep it under 50 words and focus on the user-visible changes.
+
+Response format: "Added [feature] that allows users to [benefit]" or "Updated [component] to [improvement]"`;
+
+    const summaryResponse = await openai.chat.completions.create({
+      model: "gpt-4o-mini", 
+      messages: [{ role: "user", content: summaryPrompt }],
+      temperature: 0.3
+    });
+
+    const summary = summaryResponse.choices[0].message.content.trim();
+
+    console.log(`✅ Application modified successfully`);
+
+    res.json({
+      success: true,
+      modifiedCode: modifiedCode,
+      summary: summary,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error modifying application:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to modify application: ' + error.message
+    });
+  }
+});
 
 app.listen(5000, () => console.log("Server running on port 5000"));
